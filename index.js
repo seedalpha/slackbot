@@ -98,23 +98,42 @@ function Slack(options) {
   
   this.token = options.token;
   this.messageId = 0;
+  this.messages = [];
     
+  this.$emit = this.emit.bind(this);
+  
+  this.emit = function(data) {
+    data.id = this.messageId++;
+    var msg = JSON.stringify(data)
+    if (this.connected) {
+      log("Send: %j", data);
+      this.ws.send(msg);
+    } else {
+      log("Queue: %j", data);
+      this.messages.push(msg);
+    }
+  }.bind(this);
+  
+  this.init();
+}
+
+inherits(Slack, Emitter);
+
+/**
+ * Initiate connection
+ *
+ * @api private
+ */
+
+Slack.prototype.init = function() {
+  this.connected = false;
   this.request('rtm.start', function(err, data) {
     if (err) throw err;
     this.data = data;
     this.connect();
   }.bind(this));
-  
-  this.$emit = this.emit.bind(this);
-  
-  this.emit = function(data) {
-    log("Send: %j", data);
-    data.id = this.messageId++;
-    this.ws.send(JSON.stringify(data));
-  }.bind(this);
 }
 
-inherits(Slack, Emitter);
 
 /**
  * Request slack web api
@@ -153,10 +172,17 @@ Slack.prototype.request = function(method, data, callback) {
 Slack.prototype.connect = function() {
   this.ws = new webSocket(this.data.url);
   var data = this.data;
+  var self = this;
   this.ws
     .on('open', function() {
       log('transport %s. Connected as %s[%s]', data.self.name, data.self.id);
+      self.connected = true;
+      self.messages.forEach(function(msg) {
+        log("Send: %j", data);
+        self.ws.send(msg);
+      });
     }).on('close', function(data) {
+      self.connected = false;
       log('Disconnected. Error: %s', data);
     }).on('error', function(data) {
       log('Error. Error: %s', data);
@@ -164,8 +190,33 @@ Slack.prototype.connect = function() {
       data = JSON.parse(data);
       log('Recieved: %j', data);
       
+      // @ref https://api.slack.com/events/team_join
       if (data.type === events.team_join) {
         this.data.users.push(data.user);
+      }
+      
+      // @ref https://api.slack.com/events/team_migration_started
+      if (data.type === events.team_migration_started) {
+        return this.init();
+      }
+      
+      // @ref https://api.slack.com/events/group_joined
+      if (data.type === events.group_joined) {
+        this.data.channels.push(data.channel);
+      }
+      
+      // @ref https://api.slack.com/events/channel_joined
+      if (data.type === events.channel_joined) {
+        this.data.channels.push(data.channel);
+      }
+      
+      // @ref https://api.slack.com/events/user_change
+      if (data.type === events.user_change) {
+        var user = find(this.data.users, 'id', data.user.id);
+        if (user) {
+          var position = this.data.users.indexOf(user);
+          this.data.users.splice(position, 1, data.user);
+        }
       }
       
       this.$emit('*', data);
