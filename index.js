@@ -7,7 +7,9 @@ var request     = require('request');
 var debug       = require('debug');
 var fmt         = require('util').format;
 var Emitter     = require('events').EventEmitter;
-var inherits     = require('util').inherits;
+var inherits    = require('util').inherits;
+var through     = require('through2').obj;
+var throughout  = require('throughout');
 
 /**
  * Logger
@@ -87,6 +89,7 @@ var events = {
  *
  * @param {Object} options
  *   @param {String} token
+ *   @param {Boolean} ignoreSlackbot, default true
  */
 
 function Slack(options) {
@@ -97,6 +100,7 @@ function Slack(options) {
   Emitter.call(this);
   
   this.token = options.token;
+  this.ignoreSlackbot = options.ignoreSlackbot || true;
   this.messageId = 0;
   this.messages = [];
     
@@ -161,6 +165,8 @@ Slack.prototype.request = function(method, data, callback) {
   request
     .post(fmt('https://slack.com/api/%s', method), cb)
     .form(data);
+    
+  return this;
 }
 
 /**
@@ -217,6 +223,10 @@ Slack.prototype.connect = function() {
           var position = this.data.users.indexOf(user);
           this.data.users.splice(position, 1, data.user);
         }
+      }
+      
+      if (data.user === 'USLACKBOT' && this.ignoreSlackbot) {
+        return log('Slackbot message: %j', data);
       }
       
       this.$emit('*', data);
@@ -278,6 +288,8 @@ Slack.prototype.send = function(channel, text) {
   } else {
     this.emit(channel);
   }
+  
+  return this;
 }
 
 /**
@@ -306,7 +318,55 @@ Slack.prototype.sendIM = function(user, text) {
       log('Unable to create IM channel for user %j', user);
     }
   }.bind(this));
+  
+  return this;
 }
+
+// /**
+//  * Get message stream
+//  */
+//
+// Slack.prototype.stream = function() {
+//
+//   var stream = through(function(chunk, enc, cb) {
+//     if (chunk.type === 'result') {
+//       var args = chunk.args;
+//       if (typeof args[0] === 'string') { // channelId
+//         this.send(args[0], args[1]) // send message to channel
+//       } else { // probably object
+//         if (args[0].attachments) {
+//           args[0].attachments = JSON.stringify(args[0].attachments);
+//         }
+//         this.request('chat.postMessage', args[0], function(err, result) {
+//           if (err) return log(err);
+//         });
+//       }
+//     } else if (chunk.type === 'error') {
+//       log('Errored with %j', chunk.args);
+//     } else if (chunk.type === 'log') {
+//       log('Logged: %j', chunk.args);
+//     }
+//     cb(); // dont block stream
+//   }.bind(this));
+//
+//   this.on('message', function(message) {
+//     if (!message.type) {
+//       return log('Received a message without a type %j', data);
+//     }
+//
+//     stream.push({
+//       message: message.text,
+//       context: {
+//         message: message,
+//         data: this.data,
+//         user: this.user(message.user),
+//         channel: this.channel(message.channel)
+//       }
+//     });
+//   }.bind(this));
+//
+//   return stream;
+// }
 
 /**
  * Send ping message
@@ -318,6 +378,8 @@ Slack.prototype.ping = function() {
   this.emit({
     type: 'ping'
   });
+  
+  return this;
 };
 
 /**
