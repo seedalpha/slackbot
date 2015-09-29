@@ -75,7 +75,6 @@ var stream = slack.stream();
 stream.pipe(through(chunk, enc, cb) {
   chunk.message // message text
   chunk.context.message // slack message object
-  chunk.context.data // slack data, eg. all ims, users, channels, self, etc.
   chunk.context.user // user object
   chunk.context.channel // channel object
   this.push({ type: 'result', args: [channelId, messageText]);

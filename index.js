@@ -391,7 +391,6 @@ Slack.prototype.stream = function() {
       message: message.text,
       context: {
         message: message,
-        data: this.data,
         user: this.user(message.user),
         channel: this.channel(message.channel)
       }
