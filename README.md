@@ -10,6 +10,7 @@
 
 Options should contain a `token` field that is string.
 Options could contain an `ignoreSlackbot` field, that is an optional boolean and true by default
+Options could contain an `ignoreReplies` field, that is an optional boolean and true by default
 
 ```javascript
 var Slack = require('seed-slackbot');
@@ -64,41 +65,23 @@ Send message to IM
 slack.sendIm('9876', 'Hello user!');
 ```
 
-<!-- ##### stream():DuplexStream
+##### stream():DuplexStream
 
 Create a duplex stream
 
 ```javascript
 var stream = slack.stream();
 
-stream.on('data', function(chunk) {
+stream.pipe(through(chunk, enc, cb) {
   chunk.message // message text
   chunk.context.message // slack message object
   chunk.context.data // slack data, eg. all ims, users, channels, self, etc.
   chunk.context.user // user object
   chunk.context.channel // channel object
-});
-
-stream.push({
-  type: 'result',
-  args: ['1234', 'Hello channel 1234!'] // send a simple message to a channel
-});
-
-stream.push({
-  type: 'result',
-  args: { type: 'message', channel: '12345', text: 'Hello', attachments: [....] } // send a request to web api
-});
-
-stream.push({
-  type: 'error',
-  args: [...] // will log an error
-});
-
-stream.push({
-  type: 'log',
-  args: [...] // will log args
-});
-``` -->
+  this.push({ type: 'result', args: [channelId, messageText]);
+  cb();
+}).pipe(stream);
+```
 
 ### Usage
 

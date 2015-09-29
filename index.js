@@ -16,6 +16,7 @@ var throughout  = require('throughout');
  */
 
 var log = debug('slackbot');
+log.error = debug('slackbot:error');
 
 /**
  * Slack Events (just for the reference)
@@ -90,6 +91,7 @@ var events = {
  * @param {Object} options
  *   @param {String} token
  *   @param {Boolean} ignoreSlackbot, default true
+ *   @param {Boolean} ignoreReplies, default true
  */
 
 function Slack(options) {
@@ -101,15 +103,28 @@ function Slack(options) {
   
   this.token = options.token;
   this.ignoreSlackbot = options.ignoreSlackbot || true;
+  this.ignoreReplies  = options.ignoreReplies || true;
   this.messageId = 0;
   this.messages = [];
-    
+  
   this.$emit = this.emit.bind(this);
   
   this.emit = function(data) {
     data.id = this.messageId++;
-    var msg = JSON.stringify(data)
+    var msg = JSON.stringify(data);
+    
     if (this.connected) {
+      var channel = this.channel(data.channel);
+      if (!channel) return log.error('Dropping a message (reason: cant find channel) %j', data);
+      if (channel.is_im === false) { // message on a public channel, need to check message length
+        if (msg.length > 4000) {
+          return log.error('Dropping a message (reason: more than 4000 chars long on a public channel) %j', data);
+        }
+      } else {
+        if (msg.length > 16 * 1024) {
+          return log.error('Dropping a message (reason: more than 16kb size) %j', data);
+        }
+      }
       log("Send: %j", data);
       this.ws.send(msg);
     } else {
@@ -137,7 +152,6 @@ Slack.prototype.init = function() {
     this.connect();
   }.bind(this));
 }
-
 
 /**
  * Request slack web api
@@ -184,14 +198,25 @@ Slack.prototype.connect = function() {
       log('transport %s. Connected as %s[%s]', data.self.name, data.self.id);
       self.connected = true;
       self.messages.forEach(function(msg) {
+        var channel = self.channel(data.channel);
+        if (!channel) return log.error('Dropping a message (reason: cant find a channel) %j', data);
+        if (channel.is_im === false) { // message on a public channel, need to check message length
+          if (msg.length > 4000) {
+            return log.error('Dropping a message (reason: more than 4000 chars long on a public channel) %j', data);
+          }
+        } else {
+          if (msg.length > 16 * 1024) {
+            return log.error('Dropping a message (reason: more than 16kb size) %j', data);
+          }
+        }
         log("Send: %j", data);
         self.ws.send(msg);
       });
     }).on('close', function(data) {
       self.connected = false;
-      log('Disconnected. Error: %s', data);
+      log.error('Disconnected. Error: %s', data);
     }).on('error', function(data) {
-      log('Error. Error: %s', data);
+      log.error('Error. Error: %s', data);
     }).on('message', function(data) {
       data = JSON.parse(data);
       log('Recieved: %j', data);
@@ -226,7 +251,11 @@ Slack.prototype.connect = function() {
       }
       
       if (data.user === 'USLACKBOT' && this.ignoreSlackbot) {
-        return log('Slackbot message: %j', data);
+        return log('Ignored Slackbot message: %j', data);
+      }
+      
+      if (data.reply_to && this.ignoreReplies) {
+        return log('Ignored Reply message: %j', data);
       }
       
       this.$emit('*', data);
@@ -243,7 +272,8 @@ Slack.prototype.connect = function() {
 
 Slack.prototype.channel = function(term) {
   return find(this.data.channels, 'name', term) ||  
-    find(this.data.channels, 'id', term);
+    find(this.data.channels, 'id', term) ||
+    find(this.data.ims, 'id', term);
 }
 
 /**
@@ -315,58 +345,61 @@ Slack.prototype.sendIM = function(user, text) {
       this.data.ims.push(result.channel);
       this.send(result.channel.id, text);
     } else {
-      log('Unable to create IM channel for user %j', user);
+      log.error('Unable to create IM channel for user %j', user);
     }
   }.bind(this));
   
   return this;
 }
 
-// /**
-//  * Get message stream
-//  */
-//
-// Slack.prototype.stream = function() {
-//
-//   var stream = through(function(chunk, enc, cb) {
-//     if (chunk.type === 'result') {
-//       var args = chunk.args;
-//       if (typeof args[0] === 'string') { // channelId
-//         this.send(args[0], args[1]) // send message to channel
-//       } else { // probably object
-//         if (args[0].attachments) {
-//           args[0].attachments = JSON.stringify(args[0].attachments);
-//         }
-//         this.request('chat.postMessage', args[0], function(err, result) {
-//           if (err) return log(err);
-//         });
-//       }
-//     } else if (chunk.type === 'error') {
-//       log('Errored with %j', chunk.args);
-//     } else if (chunk.type === 'log') {
-//       log('Logged: %j', chunk.args);
-//     }
-//     cb(); // dont block stream
-//   }.bind(this));
-//
-//   this.on('message', function(message) {
-//     if (!message.type) {
-//       return log('Received a message without a type %j', data);
-//     }
-//
-//     stream.push({
-//       message: message.text,
-//       context: {
-//         message: message,
-//         data: this.data,
-//         user: this.user(message.user),
-//         channel: this.channel(message.channel)
-//       }
-//     });
-//   }.bind(this));
-//
-//   return stream;
-// }
+/**
+ * Get message stream
+ */
+
+Slack.prototype.stream = function() {
+  var input = through(function(chunk, enc, cb) {
+    if (chunk.type === 'result') {
+      var args = chunk.args;
+      if (typeof args[0] === 'string') { // channelId
+        this.send(args[0], args[1]); // send message to channel
+      } else { // probably object
+        if (args[0].attachments) {
+          args[0].attachments = JSON.stringify(args[0].attachments);
+        }
+        this.request('chat.postMessage', args[0], function(err, result) {
+          if (err) return log.error(err);
+        });
+      }
+    } else if (chunk.type === 'error') {
+      log.error('Errored with %j', chunk.args);
+    } else if (chunk.type === 'log') {
+      log('Logged: %j', chunk.args);
+    } else {
+      log.error('Unknown chunk %j', chunk);
+    }
+    cb(); // dont block stream
+  }.bind(this));
+  
+  var output = through();
+  
+  this.on('message', function(message) {
+    if (!message.type) {
+      return log.error('Received a message without a type %j', data);
+    }
+
+    output.write({
+      message: message.text,
+      context: {
+        message: message,
+        data: this.data,
+        user: this.user(message.user),
+        channel: this.channel(message.channel)
+      }
+    });
+  }.bind(this));
+
+  return throughout(input, output);
+}
 
 /**
  * Send ping message
