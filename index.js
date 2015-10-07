@@ -6,16 +6,16 @@ var webSocket   = require('ws');
 var request     = require('request');
 var debug       = require('debug');
 var fmt         = require('util').format;
-var Emitter     = require('events').EventEmitter;
+var Events      = require('events').EventEmitter;
 var inherits    = require('util').inherits;
 var through     = require('through2').obj;
-var throughout  = require('throughout');
+var duplexify   = require('duplexify');
 
 /**
  * Logger
  */
 
-var log = debug('slackbot');
+var log   = debug('slackbot');
 log.error = debug('slackbot:error');
 
 /**
@@ -84,336 +84,6 @@ var events = {
     reaction_removed: 'reaction_removed'
 };
 
-
-/**
- * Constructor
- *
- * @param {Object} options
- *   @param {String} token
- *   @param {Boolean} ignoreSlackbot, default true
- *   @param {Boolean} ignoreReplies, default true
- */
-
-function Slack(options) {
-  if (!(this instanceof Slack)) {
-    return new Slack(options);
-  }
-  
-  Emitter.call(this);
-  
-  this.token = options.token;
-  this.ignoreSlackbot = options.ignoreSlackbot || true;
-  this.ignoreReplies  = options.ignoreReplies || true;
-  this.messageId = 0;
-  this.messages = [];
-  
-  this.$emit = this.emit.bind(this);
-  
-  this.emit = function(data) {
-    data.id = this.messageId++;
-    var msg = JSON.stringify(data);
-    
-    if (this.connected) {
-      var channel = this.channel(data.channel);
-      if (!channel) return log.error('Dropping a message (reason: cant find channel) %j', data);
-      if (channel.is_im === false) { // message on a public channel, need to check message length
-        if (msg.length > 4000) {
-          return log.error('Dropping a message (reason: more than 4000 chars long on a public channel) %j', data);
-        }
-      } else {
-        if (msg.length > 16 * 1024) {
-          return log.error('Dropping a message (reason: more than 16kb size) %j', data);
-        }
-      }
-      log("Send: %j", data);
-      this.ws.send(msg);
-    } else {
-      log("Queue: %j", data);
-      this.messages.push(msg);
-    }
-  }.bind(this);
-  
-  this.init();
-}
-
-inherits(Slack, Emitter);
-
-/**
- * Initiate connection
- *
- * @api private
- */
-
-Slack.prototype.init = function() {
-  this.connected = false;
-  this.request('rtm.start', function(err, data) {
-    if (err) throw err;
-    this.data = data;
-    this.connect();
-  }.bind(this));
-}
-
-/**
- * Request slack web api
- *
- * @param {String} method
- * @param {Object} data, optional
- * @param {Function} callback(err, result)
- */
-
-Slack.prototype.request = function(method, data, callback) {
-  if (typeof data === 'function') {
-    callback = data;
-    data = {};
-  }
-  
-  data.token = this.token;
-  
-  function cb(err, response, body) {
-    if (err || response.statusCode !== 200) {
-      return callback(err || response.statusCode);
-    }
-    callback(null, JSON.parse(body));
-  }
-  
-  request
-    .post(fmt('https://slack.com/api/%s', method), cb)
-    .form(data);
-    
-  return this;
-}
-
-/**
- * Connect to Slack RTM
- *
- * @api private
- */
-
-Slack.prototype.connect = function() {
-  this.ws = new webSocket(this.data.url);
-  var data = this.data;
-  var self = this;
-  this.ws
-    .on('open', function() {
-      log('transport %s. Connected as %s[%s]', data.self.name, data.self.id);
-      self.connected = true;
-      self.messages.forEach(function(msg) {
-        var channel = self.channel(data.channel);
-        if (!channel) return log.error('Dropping a message (reason: cant find a channel) %j', data);
-        if (channel.is_im === false) { // message on a public channel, need to check message length
-          if (msg.length > 4000) {
-            return log.error('Dropping a message (reason: more than 4000 chars long on a public channel) %j', data);
-          }
-        } else {
-          if (msg.length > 16 * 1024) {
-            return log.error('Dropping a message (reason: more than 16kb size) %j', data);
-          }
-        }
-        log("Send: %j", data);
-        self.ws.send(msg);
-      });
-    }).on('close', function(data) {
-      self.connected = false;
-      log.error('Disconnected. Error: %s', data);
-    }).on('error', function(data) {
-      log.error('Error. Error: %s', data);
-    }).on('message', function(data) {
-      data = JSON.parse(data);
-      log('Recieved: %j', data);
-      
-      // @ref https://api.slack.com/events/team_join
-      if (data.type === events.team_join) {
-        this.data.users.push(data.user);
-      }
-      
-      // @ref https://api.slack.com/events/team_migration_started
-      if (data.type === events.team_migration_started) {
-        return this.init();
-      }
-      
-      // @ref https://api.slack.com/events/group_joined
-      if (data.type === events.group_joined) {
-        this.data.channels.push(data.channel);
-      }
-      
-      // @ref https://api.slack.com/events/channel_joined
-      if (data.type === events.channel_joined) {
-        this.data.channels.push(data.channel);
-      }
-      
-      // @ref https://api.slack.com/events/user_change
-      if (data.type === events.user_change) {
-        var user = find(this.data.users, 'id', data.user.id);
-        if (user) {
-          var position = this.data.users.indexOf(user);
-          this.data.users.splice(position, 1, data.user);
-        }
-      }
-      
-      if (data.user === 'USLACKBOT' && this.ignoreSlackbot) {
-        return log('Ignored Slackbot message: %j', data);
-      }
-      
-      if (data.reply_to && this.ignoreReplies) {
-        return log('Ignored Reply message: %j', data);
-      }
-      
-      this.$emit('*', data);
-      this.$emit(data.type, data);
-    }.bind(this));
-}
-
-/**
- * Get channel by id or name
- *
- * @param {String} term, channel name or id
- * @return {Object} channel
- */
-
-Slack.prototype.channel = function(term) {
-  return find(this.data.channels, 'name', term) ||  
-    find(this.data.channels, 'id', term) ||
-    find(this.data.ims, 'id', term);
-}
-
-/**
- * Get user by id or name
- *
- * @param {String} term, user name or id
- * @return {Object} user
- */
-
-Slack.prototype.user = function(term) {
-  return find(this.data.users, 'name', term) ||
-    find(this.data.users, 'id', term);
-};
-
-/**
- * Get IM by user, user.id or im.id
- *
- * @param {String} term, username, userid or im id
- * @return {Object} im
- */
-
-Slack.prototype.im = function(term) {
-  return find(this.data.ims, 'user', term) ||
-    find(this.data.ims, 'user', this.user(term).id) ||
-    find(this.data.ims, 'id', term);
-}
-
-/**
- * Send message to channel
- *
- * @param {String} channel, channel id
- * @param {String} text, text to send
- */
-
-Slack.prototype.send = function(channel, text) {
-  if (typeof channel === typeof text) {
-    this.emit({
-      type: 'message',
-      channel: channel,
-      text: text
-    });
-  } else {
-    this.emit(channel);
-  }
-  
-  return this;
-}
-
-/**
- * Send a private message (initiate)
- *
- * @param {String} user, user id
- * @param {String} text, message to send
- */
-
-Slack.prototype.sendIM = function(user, text) {
-  var im = this.im(user);
-  user = this.user(user);
-  
-  if (im) {
-    return this.send(im.id, text);
-  }
-
-  this.request('im.open', { 
-    user: user.id
-  }, function(err, result) {
-    if (err) return log(err);
-    if (result.ok === true) {
-      this.data.ims.push(result.channel);
-      this.send(result.channel.id, text);
-    } else {
-      log.error('Unable to create IM channel for user %j', user);
-    }
-  }.bind(this));
-  
-  return this;
-}
-
-/**
- * Get message stream
- */
-
-Slack.prototype.stream = function() {
-  var input = through(function(chunk, enc, cb) {
-    if (chunk.type === 'result') {
-      var args = chunk.args;
-      if (typeof args[0] === 'string') { // channelId
-        this.send(args[0], args[1]); // send message to channel
-      } else { // probably object
-        if (args[0].attachments) {
-          args[0].attachments = JSON.stringify(args[0].attachments);
-        }
-        this.request('chat.postMessage', args[0], function(err, result) {
-          if (err) return log.error(err);
-        });
-      }
-    } else if (chunk.type === 'error') {
-      log.error('Errored with %j', chunk.args);
-    } else if (chunk.type === 'log') {
-      log('Logged: %j', chunk.args);
-    } else {
-      log.error('Unknown chunk %j', chunk);
-    }
-    cb(); // dont block stream
-  }.bind(this));
-  
-  var output = through();
-  
-  this.on('message', function(message) {
-    if (!message.type) {
-      return log.error('Received a message without a type %j', data);
-    }
-
-    output.write({
-      message: message.text,
-      context: {
-        message: message,
-        user: this.user(message.user),
-        channel: this.channel(message.channel)
-      }
-    });
-  }.bind(this));
-
-  return throughout(input, output);
-}
-
-/**
- * Send ping message
- *
- * @api private
- */
-
-Slack.prototype.ping = function() {
-  this.emit({
-    type: 'ping'
-  });
-  
-  return this;
-};
-
 /**
  * Find element in array by field value
  *
@@ -432,6 +102,367 @@ function find(arr, field, value) {
     }
   });
   return out;
+}
+
+/**
+ * Constructor
+ *
+ * @param {Object} options
+ *   @param {String} token
+ *   @param {Boolean} processSlackbot, default false
+ *   @param {Boolean} processReplies, default false
+ *   @param {Boolean} processSubtypes, default false
+ */
+
+function Slack(options) {
+  if (!(this instanceof Slack)) {
+    return new Slack(options);
+  }
+  
+  Events.call(this);
+  
+  if (typeof options === 'string') {
+    options = { token: options };
+  }
+  
+  this._token           = options.token;
+  this._processSlackbot = options.processSlackbot;
+  this._processReplies  = options.processReplies;
+  this._processSubtypes = options.processSubtypes;
+  this._messageId       = 0;
+  this._messages        = [];
+  this._data            = null;
+  
+  this._writeable       = through(handle);
+  this._readable        = through();
+  this._stream          = duplexify(
+    this._writeable, 
+    this._readable,
+    { objectMode: true }
+  );
+  
+  var self = this;
+  
+  function handle(chunk, enc, cb) {
+    if (Array.isArray(chunk)) {
+      // plain text message, use rtm
+      self.send(chunk[0], chunk[1]);
+    } else {
+      // object, use request
+      if (chunk.attachments && typeof chunk.attachments !== 'string') {
+        chunk.attachments = JSON.stringify(chunk.attachments);
+      }
+      
+      self.request('chat.postMessage', chunk, function(err, result) {
+        if (error) return log.error(err);
+      });
+    }
+    cb();
+  }
+  
+  this._init();
+}
+
+inherits(Slack, Events);
+
+/*
+ * Request slack rtm endpoint; download inital state
+ *
+ * @emit 'init'
+ * @api private
+ */
+
+Slack.prototype._init = function() {
+  this._connected = false;
+  this.request('rtm.start', function(err, data) {
+    if (err) throw err;
+    this._data = data;
+    this.emit('init', data);
+    this._connect();
+  }.bind(this));
+}
+
+/**
+ * Connect to Slack RTM
+ *
+ * @api private
+ */
+
+Slack.prototype._connect = function() {
+  this._ws = new webSocket(this._data.url);
+  var data = this._data;
+  var self = this;
+  
+  this._ws.on('open', function() {
+    log('transport %s. Connected as %s', data.self.name, data.self.id);
+    self._connected = true;
+    while(self._messages.length) {
+      self._send(self._messages.shift());
+    }
+  });
+  
+  this._ws.on('close', function(reason) {
+    self._connected = false;
+    log.error('Disconnected. Reason: %s', reason);
+  });
+  
+  this._ws.on('error', function(error) {
+    log.error('Error. Error: %s', error);
+  });
+  
+  this._ws.on('message', function(message) {
+    message = JSON.parse(message);
+    
+    if (message.user === 'USLACKBOT' && !self._processSlackbot) {
+      return log('Ignored Slackbot message: %j', message);
+    }
+    
+    if (typeof message.reply_to !== 'undefined' && !self._processRelies) {
+      return log('Ignored Reply message: %j', message);
+    }
+    
+    if (typeof message.subtype !== 'undefined' && !self._processSubtypes) {
+      return log('Ignored Subtype message: %j', message);
+    }
+    
+    log('Recieved: %j', message);
+    
+    switch(message.type) {
+    // @ref https://api.slack.com/events/team_join
+    case events.team_join: 
+      data.users.push(message.user);
+      self.request('im.open', { user: message.user.id }, function(err, result) {
+        if (err) {
+          return log.error(err);
+        }
+        if (!result.ok) {
+          return log.error('Unable to create IM channel for user %j %j', user, result);
+        }
+        result.channel.user = result.channel.user || message.user.id;
+        data.ims.push(result.channel);
+        self._push(message);
+      });
+      return;
+      break;
+    // @ref https://api.slack.com/events/team_migration_started
+    case events.team_migration_started:
+      return self._init();
+      break;
+    // @ref https://api.slack.com/events/group_joined
+    case events.group_joined:
+      data.channels.push(message.channel);
+      break;
+    // @ref https://api.slack.com/events/channel_joined
+    case events.channel_joined:
+      data.channels.push(message.channel);
+      break;
+    // @ref https://api.slack.com/events/user_change
+    case events.user_change: 
+      var user = find(data.users, 'id', message.user.id);
+      if (user) {
+        data.users.splice(data.users.indexOf(user), 1, message.user);
+      }
+      break;
+    case events.hello:
+      break;
+    }
+    
+    self._push(message);
+  });
+}
+
+/**
+ * Dispatch new message 
+ *
+ * @api private
+ */
+
+Slack.prototype._push = function(message) {
+  // if (message.user) {
+  //   var user = this.user(message.user);
+  //   if (user) {
+  //     message.user = {
+  //       id: user.id,
+  //       name: user.name,
+  //       real_name: user.real_name,
+  //       is_admin: user.is_admin,
+  //       is_owner: user.is_owner,
+  //       is_bot: user.is_bot
+  //     }
+  //   }
+  // }
+  //
+  // if (message.channel) {
+  //   var channel = this.channel(message.channel);
+  //   if (channel) {
+  //     message.channel = channel;
+  //   }
+  // }
+  //
+  // var user = this.user(this._data.self.id)
+  //
+  // message.self = {
+  //   id: user.id,
+  //   name: user.name,
+  //   real_name: user.real_name,
+  //   is_admin: user.is_admin,
+  //   is_owner: user.is_owner,
+  //   is_bot: user.is_bot
+  // };
+  //
+  
+  this._readable.push(message);
+  this.emit('*', message);
+  this.emit(message.type, message);
+}
+
+/**
+ * Validate and send message to slack
+ *
+ * @api private
+ */
+
+Slack.prototype._send = function(msg) {
+  if (!this._connected) {
+    return this._messages.push(msg);
+  }
+  
+  var channel = this.channel(msg.channel);
+  
+  if (!channel) {
+    return log.error('Dropping a message (reason: cant find a channel) %j', msg);
+  }
+  
+  msg.id = this._messageId++;
+  
+  var payload = JSON.stringify(msg);
+  
+  if (payload.length > 16 * 1024) {
+    return log.error('Dropping a message (reason: more than 16kb size) %j', msg);
+  }
+  
+  if (channel.is_im === false && payload.length > 4000) {
+    return log.error('Dropping a message (reason: more than 4000 chars long on a public channel) %j', msg);
+  }
+  
+  log("Sending: %j", msg);
+  this._ws.send(payload);
+}
+
+/**
+ * Send (rtm) message to a channel
+ *
+ * @param {String|Object} channel, channel id
+ * @param {String} text, text to send
+ * @return {Slack} self
+ *
+ * @example
+ *   .send('C123', 'Hello')
+ *   or
+ *   .send({ type: 'message', channel: 'C123', text: 'Hello' })
+ */
+
+Slack.prototype.send = function(channel, text) {
+  if (typeof channel === typeof text) {
+    this._send({
+      type: 'message',
+      channel: this.channel(channel).id,
+      text: text
+    });
+  } else {
+    this._send(channel);
+  }
+  
+  return this;
+}
+
+/**
+ * Request slack web api
+ *
+ * @param {String} method
+ * @param {Object} data, optional
+ * @param {Function} callback(err, result)
+ * @return {Slack} self
+ */
+
+Slack.prototype.request = function(method, data, callback) {
+  if (typeof data === 'function') {
+    callback = data;
+    data = {};
+  }
+  
+  data.token = this._token;
+  
+  function cb(err, response, body) {
+    if (err || response.statusCode !== 200) {
+      return callback(err || response.statusCode);
+    }
+    callback(null, JSON.parse(body));
+  }
+  
+  request
+    .post(fmt('https://slack.com/api/%s', method), cb)
+    .form(data);
+    
+  return this;
+}
+
+/**
+ * Get channel by id or name or user
+ *
+ * @param {String} term, channel name or id
+ * @return {Object} channel
+ */
+
+Slack.prototype.channel = function(term) {
+  return find(this._data.channels, 'name', term) ||  
+    find(this._data.channels, 'id', term) ||
+    find(this._data.ims, 'id', term);
+}
+
+/**
+ * Get user by id or name
+ *
+ * @param {String} term, user name or id
+ * @return {Object} user
+ */
+
+Slack.prototype.user = function(term) {
+  return find(this._data.users, 'name', term) ||
+    find(this._data.users, 'id', term);
+};
+
+/**
+ * Get IM by user, user.id or im.id
+ *
+ * @param {String} term, username, userid or im id
+ * @return {Object} im
+ */
+
+Slack.prototype.im = function(term) {
+  return find(this._data.ims, 'user', term) ||
+    find(this._data.ims, 'user', this.user(term).id) ||
+    find(this._data.ims, 'id', term);
+}
+
+/**
+ * Get self
+ *
+ * @return {Object} user
+ */
+
+Slack.prototype.self = function() {
+  return this.user(this._data.self.id);
+}
+
+/**
+ * Get message stream
+ *
+ * @return {Duplex} stream
+ */
+
+Slack.prototype.stream = function() {
+  return this._stream;
 }
 
 /**
