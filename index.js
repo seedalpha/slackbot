@@ -363,10 +363,11 @@ Slack.prototype.stream = function() {
       if (typeof args[0] === 'string') { // channelId
         this.send(args[0], args[1]); // send message to channel
       } else { // probably object
-        if (args[0].attachments) {
-          args[0].attachments = JSON.stringify(args[0].attachments);
+        if (args[1].attachments) {
+          // assign channel to arg obj
+          arg[1].channel = args[0];
         }
-        this.request('chat.postMessage', args[0], function(err, result) {
+        this.request('chat.postMessage', args[1], function(err, result) {
           if (err) return log.error(err);
         });
       }
@@ -386,6 +387,9 @@ Slack.prototype.stream = function() {
     if (!message.type) {
       return log.error('Received a message without a type %j', data);
     }
+
+    // most likely either a reply or a bot message
+    if(message.hasOwnProperty('reply_to') || message.hasOwnProperty('subtype')) return;
 
     output.write({
       message: message.text,
