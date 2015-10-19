@@ -360,12 +360,12 @@ Slack.prototype.stream = function() {
   var input = through(function(chunk, enc, cb) {
     if (chunk.type === 'result') {
       var args = chunk.args;
-      if (typeof args[0] === 'string') { // channelId
+      if (typeof args[1] === 'string') { // channelId
         this.send(args[0], args[1]); // send message to channel
       } else { // probably object
         if (args[1].attachments) {
           // assign channel to arg obj
-          arg[1].channel = args[0];
+          args[1].channel = args[0];
         }
         this.request('chat.postMessage', args[1], function(err, result) {
           if (err) return log.error(err);
