@@ -129,6 +129,8 @@ function Slack(options) {
   this._processSlackbot = options.processSlackbot;
   this._processReplies  = options.processReplies;
   this._processSubtypes = options.processSubtypes;
+  this._processSelf     = options.processSelf;
+  
   this._messageId       = 0;
   this._messages        = [];
   this._data            = null;
@@ -225,6 +227,10 @@ Slack.prototype._connect = function() {
       return log('Ignored Subtype message: %j', message);
     }
     
+    if (message.user === self._data.self.id && !self._processSelf) {
+      return log('Ignored Self message: %j', message);
+    }
+    
     log('Recieved: %j', message);
     
     switch(message.type) {
@@ -278,40 +284,39 @@ Slack.prototype._connect = function() {
  */
 
 Slack.prototype._push = function(message) {
-  // if (message.user) {
-  //   var user = this.user(message.user);
-  //   if (user) {
-  //     message.user = {
-  //       id: user.id,
-  //       name: user.name,
-  //       real_name: user.real_name,
-  //       is_admin: user.is_admin,
-  //       is_owner: user.is_owner,
-  //       is_bot: user.is_bot
-  //     }
-  //   }
-  // }
-  //
-  // if (message.channel) {
-  //   var channel = this.channel(message.channel);
-  //   if (channel) {
-  //     message.channel = channel;
-  //   }
-  // }
-  //
-  // var user = this.user(this._data.self.id)
-  //
-  // message.self = {
-  //   id: user.id,
-  //   name: user.name,
-  //   real_name: user.real_name,
-  //   is_admin: user.is_admin,
-  //   is_owner: user.is_owner,
-  //   is_bot: user.is_bot
-  // };
-  //
+  if (message.user) {
+    var user = this.user(message.user);
+    if (user) {
+      message.user = {
+        id: user.id,
+        name: user.name,
+        real_name: user.real_name,
+        is_admin: user.is_admin,
+        is_owner: user.is_owner,
+        is_bot: user.is_bot
+      }
+    }
+  }
+
+  if (message.channel) {
+    var channel = this.channel(message.channel);
+    if (channel) {
+      message.channel = channel;
+    }
+  }
+
+  var user = this.user(this._data.self.id)
+
+  message.self = {
+    id: user.id,
+    name: user.name,
+    real_name: user.real_name,
+    is_admin: user.is_admin,
+    is_owner: user.is_owner,
+    is_bot: user.is_bot
+  };
   
-  this._readable.push(message);
+  this._readable.push(message); // { type: 'message', channel: {...}, user: {...}, self: {...}, text: '...' }
   this.emit('*', message);
   this.emit(message.type, message);
 }

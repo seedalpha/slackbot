@@ -9,8 +9,10 @@
 ##### constructor({Object|String} options)
 
 Options should contain a `token` field that is string.
-Options could contain an `processSlackbot` field, that is an optional boolean and false by default
-Options could contain an `processReplies` field, that is an optional boolean and false by default
+Options could contain a `processSlackbot` field, that is an optional boolean and false by default
+Options could contain a `processReplies`  field, that is an optional boolean and false by default
+Options could contain a `processSubtypes` field, that is an optional boolean and false by default
+Options could contain a `processSelf`     field, that is an optional boolean and false by default
 
 ```javascript
 var Slack = require('seed-slackbot');
@@ -75,7 +77,7 @@ Get slackbot's internal duplex stream
 var stream = slack.stream();
 
 stream.pipe(through(function(message, enc, cb) {
-  if (message.type === 'presence_change' && message.user === slack.self().id) {
+  if (message.type === 'presence_change' && message.user.id === slack.self().id) {
     this.push(['test', 'I\'m back!']);
   }
   cb();
@@ -95,6 +97,10 @@ slack.on('message', function(data) {
   });
 });
 ```
+
+### TODO
+
+Buffer stream until slack is connected
 
 ### License
 
