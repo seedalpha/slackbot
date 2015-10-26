@@ -156,7 +156,7 @@ function Slack(options) {
       }
       
       self.request('chat.postMessage', chunk, function(err, result) {
-        if (error) return log.error(err);
+        if (err) return log.error(err);
       });
     }
     cb();
