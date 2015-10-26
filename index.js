@@ -422,7 +422,9 @@ Slack.prototype.request = function(method, data, callback) {
 Slack.prototype.channel = function(term) {
   return find(this._data.channels, 'name', term) ||  
     find(this._data.channels, 'id', term) ||
-    find(this._data.ims, 'id', term);
+    find(this._data.ims, 'id', term) ||
+    find(this._data.groups, 'id', term) ||
+    find(this._data.groups, 'name', term);
 }
 
 /**
