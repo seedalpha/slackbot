@@ -105,6 +105,28 @@ function find(arr, field, value) {
 }
 
 /**
+ * Mock socket
+ */
+
+function mockSocket(slack) {
+  var socket = new Events();
+  socket.send = function(payload) {
+    process.nextTick(function() {
+      slack.emit('mock:message', payload);
+    });
+  }
+  slack.mock = function(payload) {
+    process.nextTick(function() {
+      socket.emit('message', payload);
+    });
+  }
+  process.nextTick(function() {
+    socket.emit('open');
+  });
+  return socket;
+}
+
+/**
  * Constructor
  *
  * @param {Object} options
@@ -112,6 +134,7 @@ function find(arr, field, value) {
  *   @param {Boolean} processSlackbot, default false
  *   @param {Boolean} processReplies, default false
  *   @param {Boolean} processSubtypes, default false
+ *   @param {Boolean} mock, default false
  */
 
 function Slack(options) {
@@ -130,6 +153,7 @@ function Slack(options) {
   this._processReplies  = options.processReplies;
   this._processSubtypes = options.processSubtypes;
   this._processSelf     = options.processSelf;
+  this._mock            = options.mock;
   
   this._messageId       = 0;
   this._messages        = [];
@@ -157,7 +181,7 @@ function Slack(options) {
       
       self.request('chat.postMessage', chunk, function(err, result) {
         if (err) return log.error(err);
-      });
+      });      
     }
     cb();
   }
@@ -191,7 +215,8 @@ Slack.prototype._init = function() {
  */
 
 Slack.prototype._connect = function() {
-  this._ws = new webSocket(this._data.url);
+  this._ws = (this._mock) ? mockSocket(this) : new webSocket(this._data.url);
+  
   var data = this._data;
   var self = this;
   
@@ -405,10 +430,14 @@ Slack.prototype.request = function(method, data, callback) {
     callback(null, JSON.parse(body));
   }
   
-  request
-    .post(fmt('https://slack.com/api/%s', method), cb)
-    .form(data);
-    
+  var url = fmt('https://slack.com/api/%s', method);
+  
+  if (this._mock) {
+    this.emit('mock:request', { url: url, method: method, data: data, callback: callback });
+  } else {
+    request.post(url, cb).form(data);
+  }
+  
   return this;
 }
 

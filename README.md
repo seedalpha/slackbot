@@ -13,6 +13,7 @@ Options could contain a `processSlackbot` field, that is an optional boolean and
 Options could contain a `processReplies`  field, that is an optional boolean and false by default
 Options could contain a `processSubtypes` field, that is an optional boolean and false by default
 Options could contain a `processSelf`     field, that is an optional boolean and false by default
+Options could contain a `mock`            field, that is an optional boolean and false by default
 
 ```javascript
 var Slack = require('seed-slackbot');
@@ -95,6 +96,36 @@ slack.on('message', function(data) {
   slack.request('chat.postMessage', msg, function(err, result) {
     
   });
+});
+```
+
+### Testing
+
+It's possible to mock slack transports to test slackbot and it's dependents
+
+```javascript
+var slack = new Slack({ mock: true });
+
+// simulate a message coming from slack
+slack.mock(JSON.stringify({
+  channel: 'C123',
+  type: 'message',
+  text: 'Hello world',
+  user: 'U123'
+}));
+
+// examine messages going to slack
+slack.on('mock:message', function(payload) {
+  console.log(JSON.parse(payload));
+});
+
+// examine requests going to slack and simulate slack response
+slack.on('mock:request', function(data) {
+  // data.url
+  // data.method 'rtm.start'
+  // data.data {}
+  // data.callback
+  data.callback(null, { data: { users: [{}], channels: [{}], groups: [], ims: [{}], ...} });
 });
 ```
 
