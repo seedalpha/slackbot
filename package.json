@@ -3,6 +3,9 @@
   "version": "3.2.0",
   "description": "basically just slack rtm and web apis wrapped into an event emitter",
   "main": "index.js",
+  "scripts": {
+    "test": "mocha -R spec -b -t 30000 test/spec"
+  },
   "author": "Vladimir Popov",
   "license": "MIT",
   "dependencies": {
@@ -11,5 +14,9 @@
     "request": "^2.58.0",
     "through2": "^2.0.0",
     "ws": "^0.7.2"
+  },
+  "devDependencies": {
+    "chai": "^3.4.0",
+    "mocha": "^2.3.3"
   }
 }

@@ -112,12 +112,12 @@ function mockSocket(slack) {
   var socket = new Events();
   socket.send = function(payload) {
     process.nextTick(function() {
-      slack.emit('mock:message', payload);
+      slack.emit('message', payload);
     });
   }
   slack.mock = function(payload) {
     process.nextTick(function() {
-      socket.emit('message', payload);
+      socket.emit('mock:message', payload);
     });
   }
   process.nextTick(function() {
