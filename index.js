@@ -218,7 +218,7 @@ Slack.prototype._init = function() {
     var missing = [];
     
     data.users.forEach(function(user) {
-      if (self.im(user.id)) return;
+      if (self.im(user.id) || user.deleted) return;
       missing.push(function(next) {
         self.request('im.open', { user: user.id }, function(err, result) {
           if (err || !result.ok) return next(err || result);

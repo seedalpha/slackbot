@@ -1,6 +1,6 @@
 {
   "name": "seed-slackbot",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "basically just slack rtm and web apis wrapped into an event emitter",
   "main": "index.js",
   "scripts": {
