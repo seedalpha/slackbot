@@ -10,6 +10,7 @@ var Events      = require('events').EventEmitter;
 var inherits    = require('util').inherits;
 var through     = require('through2').obj;
 var duplexify   = require('duplexify');
+var Queue       = require('seed-queue');
 
 /**
  * Logger
@@ -207,13 +208,32 @@ inherits(Slack, Events);
  */
 
 Slack.prototype._init = function() {
-  this._connected = false;
-  this.request('rtm.start', function(err, data) {
+  var self = this;
+  self._connected = false;
+  
+  self.request('rtm.start', function(err, data) {
     if (err) throw err;
-    this._data = data;
-    this.emit('init', data);
-    this._connect();
-  }.bind(this));
+    self._data = data;
+    
+    var missing = [];
+    
+    data.users.forEach(function(user) {
+      if (self.im(user.id)) return;
+      missing.push(function(next) {
+        self.request('im.open', { user: user.id }, function(err, result) {
+          if (err || !result.ok) return next(err || result);
+          data.ims.push(result.channel);
+          next();
+        });
+      });
+    });
+    
+    Queue().add(missing).end(function(err) {
+      if (err) return log.error('Unable to create IM channel', err);
+      self._connect();
+      self.emit('init', data);
+    });
+  });
 }
 
 /**

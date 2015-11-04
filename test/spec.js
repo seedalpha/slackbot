@@ -17,7 +17,7 @@ describe('Slackbot', function() {
             attachments: message.attachments
           }})
         } else {
-          data.callback(null, { url: '', users: [{ id: 'U123' }], channels: [{}], groups: [], ims: [{}] , self: {} });
+          data.callback(null, { url: '', users: [{ id: 'U123' }], channels: [], groups: [], ims: [{ id: 'D123', user: 'U123'}] , self: {} });
         }
       });
     })
@@ -30,9 +30,11 @@ describe('Slackbot', function() {
         text: 'Hello world',
         user: 'U123'
       };
- 
-      this.slack.mock(JSON.stringify(obj));  
-
+      
+      this.slack.on('init', function() {
+        this.slack.mock(JSON.stringify(obj));  
+      }.bind(this));
+      
       this.slack.on('message', function(data) {
         // console.log('SUCCESS');
         // console.log(data);
