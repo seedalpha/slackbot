@@ -112,14 +112,14 @@ function mockSocket(slack) {
   var socket = new Events();
   socket.send = function(payload) {
     process.nextTick(function() {
-      slack.emit('message', payload);
+      slack.emit('mock:message', payload);
     });
   }
-  slack.mock = function(payload) {
-    process.nextTick(function() {
-      socket.emit('mock:message', payload);
-    });
-  }
+  // slack.mock = function(payload) {
+  //   process.nextTick(function() {
+  //     socket.emit('message', payload);
+  //   });
+  // }
   process.nextTick(function() {
     socket.emit('open');
   });
@@ -186,6 +186,14 @@ function Slack(options) {
     cb();
   }
   
+  if (this._mock) {
+    this.mock = function(payload) {
+      process.nextTick(function() {
+        this._ws.emit('message', payload);
+      }.bind(this));
+    }.bind(this);
+  }
+
   this._init();
 }
 
@@ -433,7 +441,10 @@ Slack.prototype.request = function(method, data, callback) {
   var url = fmt('https://slack.com/api/%s', method);
   
   if (this._mock) {
-    this.emit('mock:request', { url: url, method: method, data: data, callback: callback });
+    process.nextTick(function() {
+     this.emit('mock:request', { url: url, method: method, data: data, callback: callback }); 
+    }.bind(this));
+    
   } else {
     request.post(url, cb).form(data);
   }
