@@ -422,9 +422,19 @@ Slack.prototype._send = function(msg) {
 
 Slack.prototype.send = function(channel, text) {
   if (typeof channel === typeof text) {
+    channel = this.channel(channel);
+    
+    if (!channel) {
+      channel = this.im(channel);
+    }
+    
+    if (!channel) {
+      return log.error('Ignoring, cant find %s channel');
+    }
+    
     this._send({
       type: 'message',
-      channel: this.channel(channel).id,
+      channel: channel.id,
       text: text
     });
   } else {
