@@ -11,6 +11,7 @@ var inherits    = require('util').inherits;
 var through     = require('through2').obj;
 var duplexify   = require('duplexify');
 var Queue       = require('seed-queue');
+var events      = require('./events');
 
 /**
  * Logger
@@ -18,72 +19,6 @@ var Queue       = require('seed-queue');
 
 var log   = debug('slackbot');
 log.error = debug('slackbot:error');
-
-/**
- * Slack Events (just for the reference)
- */
-
-var events = {
-    hello: 'hello',
-    message: 'message',
-    channel_marked: 'channel_marked',
-    channel_created: 'channel_created',
-    channel_joined: 'channel_joined',
-    channel_left: 'channel_left',
-    channel_deleted: 'channel_deleted',
-    channel_rename: 'channel_rename',
-    channel_archive: 'channel_archive',
-    channel_unarchive: 'channel_unarchive',
-    channel_history_changed: 'channel_history_changed',
-    im_created: 'im_created',
-    im_open: 'im_open',
-    im_close: 'im_close',
-    im_marked: 'im_marked',
-    im_history_changed: 'im_history_changed',
-    group_joined: 'group_joined',
-    group_left: 'group_left',
-    group_open: 'group_open',
-    group_close: 'group_close',
-    group_archive: 'group_archive',
-    group_unarchive: 'group_unarchive',
-    group_rename: 'group_rename',
-    group_marked: 'group_marked',
-    group_history_changed: 'group_history_changed',
-    file_created: 'file_created',
-    file_shared: 'file_shared',
-    file_unshared: 'file_unshared',
-    file_public: 'file_public',
-    file_private: 'file_private',
-    file_change: 'file_change',
-    file_deleted: 'file_deleted',
-    file_comment_added: 'file_comment_added',
-    file_comment_edited: 'file_comment_edited',
-    file_comment_deleted: 'file_comment_deleted',
-    pong: 'pong',
-    pin_added: 'pin_added',
-    pin_removed: 'pin_removed',
-    presence_change: 'presence_change',
-    manual_presence_change: 'manual_presence_change',
-    pref_change: 'pref_change',
-    user_change: 'user_change',
-    user_typing: 'user_typing',
-    team_join: 'team_join',
-    team_migration_started: 'team_migration_started',
-    star_added: 'star_added',
-    star_removed: 'star_removed',
-    emoji_changed: 'emoji_changed',
-    commands_changed: 'commands_changed',
-    team_plan_change: 'team_plan_change',
-    team_pref_change: 'team_pref_change',
-    team_rename: 'team_rename',
-    team_domain_change: 'team_domain_change',
-    email_domain_changed: 'email_domain_changed',
-    bot_added: 'bot_added',
-    bot_changed: 'bot_changed',
-    accounts_changed: 'accounts_changed',
-    reaction_added: 'reaction_added',
-    reaction_removed: 'reaction_removed'
-};
 
 /**
  * Find element in array by field value
@@ -116,11 +51,6 @@ function mockSocket(slack) {
       slack.emit('mock:message', payload);
     });
   }
-  // slack.mock = function(payload) {
-  //   process.nextTick(function() {
-  //     socket.emit('message', payload);
-  //   });
-  // }
   process.nextTick(function() {
     socket.emit('open');
   });
@@ -189,12 +119,18 @@ function Slack(options) {
   
   if (this._mock) {
     this.mock = function(payload) {
-      process.nextTick(function() {
-        this._ws.emit('message', payload);
-      }.bind(this));
-    }.bind(this);
+      if (self._connected) {
+        process.nextTick(function() {
+          self._ws.emit('message', payload);
+        });
+      } else {
+        self.on('init', function() {
+          self._ws.emit('message', payload);
+        });
+      }
+    };
   }
-
+  
   this._init();
 }
 
@@ -231,7 +167,6 @@ Slack.prototype._init = function() {
     Queue().add(missing).end(function(err) {
       if (err) return log.error('Unable to create IM channel', err);
       self._connect();
-      self.emit('init', data);
     });
   });
 }
@@ -254,6 +189,7 @@ Slack.prototype._connect = function() {
     while(self._messages.length) {
       self._send(self._messages.shift());
     }
+    self.emit('init', data);  
   });
   
   this._ws.on('close', function(reason) {
@@ -421,26 +357,31 @@ Slack.prototype._send = function(msg) {
  */
 
 Slack.prototype.send = function(channel, text) {
-  if (typeof channel === typeof text) {
-    channel = this.channel(channel);
+  if (this._connected) {
+    if (typeof channel === typeof text) {
+      channel = this.channel(channel);
     
-    if (!channel) {
-      channel = this.im(channel);
+      if (!channel) {
+        channel = this.im(channel);
+      }
+    
+      if (!channel) {
+        return log.error('Ignoring, cant find %s channel');
+      }
+    
+      this._send({
+        type: 'message',
+        channel: channel.id,
+        text: text
+      });
+    } else {
+      this._send(channel);
     }
-    
-    if (!channel) {
-      return log.error('Ignoring, cant find %s channel');
-    }
-    
-    this._send({
-      type: 'message',
-      channel: channel.id,
-      text: text
-    });
   } else {
-    this._send(channel);
+    this.on('init', function() {
+      this.send(channel, text);
+    }.bind(this));
   }
-  
   return this;
 }
 
@@ -472,9 +413,8 @@ Slack.prototype.request = function(method, data, callback) {
   
   if (this._mock) {
     process.nextTick(function() {
-     this.emit('mock:request', { url: url, method: method, data: data, callback: callback }); 
+      this.emit('mock:request', { url: url, method: method, data: data, callback: callback }); 
     }.bind(this));
-    
   } else {
     request.post(url, cb).form(data);
   }

@@ -1,10 +1,9 @@
 var should = require('chai').should();
 var Slack = require('../');
 
-
-
 describe('Slackbot', function() {
   describe('init Slack mock', function() {
+    
     beforeEach(function() {
       this.slack = new Slack({ mock: true });
       this.slack.on('mock:request', function(data) {
@@ -17,13 +16,12 @@ describe('Slackbot', function() {
             attachments: message.attachments
           }})
         } else {
-          data.callback(null, { url: '', users: [{ id: 'U123' }], channels: [], groups: [], ims: [{ id: 'D123', user: 'U123'}] , self: {} });
+          data.callback(null, { url: '', users: [{ id: 'U123' }], channels: [{ id: 'C123', user: 'U123' }], groups: [], ims: [{ id: 'D123', user: 'U123'}] , self: {} });
         }
       });
-    })
+    });
 
-    it('should send a mock message', function(done) {
-      
+    it('should receive a mock message', function(done) {
       var obj = {
         channel: 'C123',
         type: 'message',
@@ -31,19 +29,33 @@ describe('Slackbot', function() {
         user: 'U123'
       };
       
-      this.slack.on('init', function() {
-        this.slack.mock(JSON.stringify(obj));  
-      }.bind(this));
+      this.slack.mock(JSON.stringify(obj));  
       
       this.slack.on('message', function(data) {
-        // console.log('SUCCESS');
-        // console.log(data);
-        data.type.should.be.a('string');
+        data.channel.should.deep.equal({ id: 'C123', user: 'U123' });
         data.type.should.equal('message');
-        data.text.should.be.a('string');
         data.text.should.equal('Hello world');
         done();
       });
+    });
+
+    it('should send a mock message', function(done) {
+      var obj = {
+        channel: 'C123',
+        type: 'message',
+        text: 'Hello world',
+        user: 'U123'
+      };
+      
+      this.slack.on('mock:message', function(message) {
+        var data = JSON.parse(message);
+        data.channel.should.equal('C123');
+        data.type.should.equal('message');
+        data.text.should.equal('Hello world');
+        done();
+      });
+      
+      this.slack.send('C123', 'Hello world');  
     });
 
     it('should send a mock request', function(done) {
